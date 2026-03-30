@@ -2,6 +2,7 @@ import numpy as np
 import plotly.graph_objects as go
 import pandas as pd
 import itertools
+from scipy.optimize import newton
 
 # ==========================================
 # 1. CONSTANTES PHYSIQUES (Standard ESA/NASA)
@@ -258,7 +259,7 @@ def plot_mission(num_debris=3, target_debris_index=1, mode='real'):
     c_ox = chaser_r_norm * np.cos(t_circle) * U_chaser[0] + chaser_r_norm * np.sin(t_circle) * V_chaser[0]
     c_oy = chaser_r_norm * np.cos(t_circle) * U_chaser[1] + chaser_r_norm * np.sin(t_circle) * V_chaser[1]
     c_oz = chaser_r_norm * np.cos(t_circle) * U_chaser[2] + chaser_r_norm * np.sin(t_circle) * V_chaser[2]
-    fig.add_trace(go.Scatter3d(x=c_ox, y=c_oy, z=c_oz, mode='lines', line=dict(color='red', width=3, dash='dash'), opacity=0.5, name='Chaser Orbit', hoverinfo='skip'))
+    fig.add_trace(go.Scatter3d(x=c_ox, y=c_oy, z=c_oz, mode='lines', line=dict(color='red', width=3, dash='dash'), opacity=0.7, name='Chaser Orbit', hoverinfo='skip'))
 
     # --- Débris ---
     debris_data = []
@@ -280,7 +281,7 @@ def plot_mission(num_debris=3, target_debris_index=1, mode='real'):
 
         debris_data.append({'id': deb_info['id'], 'r_norm': r_norm, 'r_km': r_km, 'anomaly': deb_info['anom'], 'n': n_deb, 'U': U, 'V': V, 'W': W, 'inc': deb_info['i'], 'omega': deb_info['o'], 'color': color})
 
-        fig.add_trace(go.Scatter3d(x=orbit_x, y=orbit_y, z=orbit_z, mode='lines', line=dict(color=color, width=1), opacity=0.5, showlegend=False, hoverinfo='none'))
+        fig.add_trace(go.Scatter3d(x=orbit_x, y=orbit_y, z=orbit_z, mode='lines', line=dict(color=color, width=1), opacity=0.7, showlegend=False, hoverinfo='none'))
         fig.add_trace(go.Scatter3d(x=[0], y=[0], z=[0], mode='markers', marker=dict(size=visual_size, color=color, line=dict(width=1, color='white')), showlegend=False, name=f'Debris {deb_info["id"]}'))
 
     # Position du Chaser (initialisée à 0, mise à jour plus bas)
@@ -340,14 +341,30 @@ def plot_mission(num_debris=3, target_debris_index=1, mode='real'):
         arc_angle += 2 * np.pi
 
     arc_pts = []
-    nu_arc = np.linspace(0, arc_angle, 80)
-    for nu in nu_arc:
-        # On mappe l'ellipse de Hohmann classique (0 -> pi) sur 
-        # l'angle de transfert visuel 3D exact (0 -> arc_angle)
-        true_anom_trans = (nu / arc_angle) * np.pi
+    t_eval = np.linspace(0, t_trans, 80)
+    
+    n_trans = np.sqrt(MU / a_trans**3)
+
+    for t in t_eval:
+        M = n_trans * t
+        
+        def kepler_eq(E):
+            return E - e_trans * np.sin(E) - M
+        def d_kepler_eq(E):
+            return 1 - e_trans * np.cos(E)
+        
+        E_sol = newton(kepler_eq, M, fprime=d_kepler_eq)
+
+        tan_v_half = np.sqrt((1 + e_trans) / (1 - e_trans)) * np.tan(E_sol / 2.0)
+        true_anom_trans = 2.0 * np.arctan(tan_v_half)
+        if true_anom_trans < 0:
+            true_anom_trans += 2 * np.pi
+
         r_nu_km = a_trans * (1 - e_trans**2) / (1 + e_trans * np.cos(true_anom_trans))
         r_nu_norm = km_to_norm(r_nu_km)
-        pt = r_nu_norm * (np.cos(nu) * P_arc + np.sin(nu) * Q_arc)
+
+        nu_visuel = (true_anom_trans / np.pi) * arc_angle
+        pt = r_nu_norm * (np.cos(nu_visuel) * P_arc + np.sin(nu_visuel) * Q_arc)
         arc_pts.append(pt)
 
     arc_pts = np.array(arc_pts)
@@ -377,6 +394,7 @@ def plot_mission(num_debris=3, target_debris_index=1, mode='real'):
     dt = total_sim_time / num_frames
 
     # Mise à jour des positions de départ pour le rendu (après le "skip" d'attente longue)
+    # C'est comme si on avait simulé le temps d'attente sans l'afficher
     anom_chaser_at_skip = anom_chaser + n_chaser_val * t_skip
     for tr in fig.data:
         if getattr(tr, 'name', '') == 'Chaser':
@@ -465,4 +483,4 @@ if __name__ == "__main__":
     if choix == "2":
         plot_mission(mode='random', target_debris_index=1)
     else:
-        plot_mission(num_debris=3, target_debris_index=1, mode='real')
+        plot_mission(num_debris=10, target_debris_index=1, mode='real')
